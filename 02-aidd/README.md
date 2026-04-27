@@ -1,58 +1,79 @@
 # AI Telegram Assistant (MVP)
 
-Минимальный Telegram-бот с LLM-ответами для проверки идеи.
+Минимальный Telegram-бот с LLM-ответами через OpenRouter.
 
-## Что делает проект
+## Что умеет
 
-- Принимает текстовые сообщения в Telegram.
-- Отправляет запрос в LLM через OpenRouter.
-- Возвращает ответ пользователю в чат.
+- Отвечает на текстовые сообщения через LLM
+- Помнит последние реплики диалога (per-user, in-memory)
+- Работает с заданной ролью через системный промпт
+- Корректно обрабатывает ошибки LLM и нетекстовый ввод
 
 ## Технологии
 
-- Python 3.12
-- uv (зависимости и запуск)
-- aiogram (Telegram Bot API, polling)
-- openai client (доступ к моделям через OpenRouter)
+- Python 3.12, uv
+- aiogram 3 (Telegram Bot API, polling)
+- openai client → OpenRouter
 - Docker + docker compose
-- Makefile (единая точка запуска команд)
-
-## Требования
-
-- Python 3.12+
-- uv
-- Docker и docker compose (для контейнерного запуска)
-- Telegram Bot Token
-- OpenRouter API Key
+- ruff, pytest
 
 ## Быстрый старт
 
-1. Создай `.env` на основе `.env.example`.
-2. Заполни обязательные переменные:
-   - `TELEGRAM_BOT_TOKEN`
-   - `OPENROUTER_API_KEY`
-   - `OPENROUTER_BASE_URL` (обычно `https://openrouter.ai/api/v1`)
-   - `LLM_MODEL`
-   - `SYSTEM_PROMPT`
-   - `LOG_LEVEL`
+### 1. Переменные окружения
 
-## Локальный запуск (без Docker)
+Скопируй `.env.example` в `.env` и заполни:
 
-- `make install` — установить зависимости через `uv`.
-- `make run` — запустить бота.
+| Переменная | Обязательная | Описание |
+|------------|:---:|---------|
+| `TELEGRAM_BOT_TOKEN` | ✅ | Токен бота от @BotFather |
+| `OPENROUTER_API_KEY` | ✅ | API-ключ OpenRouter |
+| `OPENROUTER_BASE_URL` | | `https://openrouter.ai/api/v1` |
+| `LLM_MODEL` | | Модель, например `openrouter/auto` |
+| `SYSTEM_PROMPT` | | Роль/поведение ассистента |
+| `DIALOG_HISTORY_LIMIT` | | Кол-во сообщений в памяти (дефолт 10) |
+| `LOG_LEVEL` | | `INFO` или `DEBUG` |
 
-## Запуск в Docker
+### 2. Нативный запуск
 
-- `make docker-build` — собрать Docker-образ.
-- `make docker-up` — поднять контейнер через compose.
-- `make docker-down` — остановить контейнер.
+```bash
+make install   # установить зависимости
+make run       # запустить бота
+```
 
-## Полезные команды
+### 3. Запуск в Docker
 
-- `make lint` — проверить стиль кода.
-- `make test` — запустить тесты.
+```bash
+make docker-build  # собрать образ
+make docker-run    # запустить через compose
+make docker-stop   # остановить
+```
+
+## Проверки
+
+```bash
+make lint   # ruff
+make test   # pytest
+```
+
+## Структура проекта
+
+```
+src/
+  config.py          # Settings из переменных окружения
+  logger.py          # настройка logging
+  main.py            # точка входа
+  llm_client.py      # запросы к OpenRouter
+  chat_service.py    # оркестрация: история + LLM
+  dialog_history.py  # in-memory буфер диалога per-user
+  handlers/
+    start.py         # /start
+    message.py       # текстовые сообщения
+tests/
+docs/
+```
 
 ## Документация
 
-- Концепция: `docs/idea.md`
-- Техническое видение: `docs/vision.md`
+- `docs/idea.md` — концепция
+- `docs/vision.md` — техническое видение
+- `docs/tasklist.md` — план итераций
