@@ -14,7 +14,8 @@ def setup(chat_service: ChatService) -> Router:
         if not message.text or not message.text.strip():
             await message.answer(UNSUPPORTED_INPUT_MESSAGE)
             return
-        answer = await chat_service.handle(message.text.strip())
+        user_id = message.from_user.id if message.from_user else 0
+        answer = await chat_service.handle(user_id, message.text.strip())
         await message.answer(answer)
 
     return router

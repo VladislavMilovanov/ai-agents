@@ -5,6 +5,7 @@ from aiogram import Bot, Dispatcher
 
 from src.chat_service import ChatService
 from src.config import Settings
+from src.dialog_history import DialogHistory
 from src.handlers import register_handlers
 from src.llm_client import LLMClient
 from src.logger import setup_logging
@@ -19,7 +20,12 @@ async def main() -> None:
     logger.info("Starting bot")
 
     llm_client = LLMClient(settings)
-    chat_service = ChatService(llm_client, system_prompt=settings.system_prompt)
+    dialog_history = DialogHistory(limit=settings.dialog_history_limit)
+    chat_service = ChatService(
+        llm_client,
+        system_prompt=settings.system_prompt,
+        history=dialog_history,
+    )
 
     bot = Bot(token=settings.telegram_bot_token)
     dp = Dispatcher()

@@ -16,6 +16,7 @@ class Settings:
         self.system_prompt: str = os.getenv(
             "SYSTEM_PROMPT", "Ты полезный ассистент. Отвечай чётко и по делу."
         )
+        self.dialog_history_limit: int = int(os.getenv("DIALOG_HISTORY_LIMIT", "10"))
         self.log_level: str = os.getenv("LOG_LEVEL", "INFO")
 
     @staticmethod
