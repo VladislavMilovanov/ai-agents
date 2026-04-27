@@ -15,11 +15,15 @@ class LLMClient:
             base_url=settings.openrouter_base_url,
         )
 
-    async def ask(self, user_text: str) -> str:
+    async def ask(self, user_text: str, system_prompt: str = "") -> str:
         logger.debug("LLM request: %s", user_text[:100])
+        messages: list[dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": user_text})
         response = await self._client.chat.completions.create(
             model=self._model,
-            messages=[{"role": "user", "content": user_text}],
+            messages=messages,
         )
         answer = response.choices[0].message.content or ""
         logger.debug("LLM response: %s", answer[:100])

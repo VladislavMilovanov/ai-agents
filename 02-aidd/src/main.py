@@ -19,7 +19,7 @@ async def main() -> None:
     logger.info("Starting bot")
 
     llm_client = LLMClient(settings)
-    chat_service = ChatService(llm_client)
+    chat_service = ChatService(llm_client, system_prompt=settings.system_prompt)
 
     bot = Bot(token=settings.telegram_bot_token)
     dp = Dispatcher()

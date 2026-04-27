@@ -13,6 +13,9 @@ class Settings:
             "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
         )
         self.llm_model: str = os.getenv("LLM_MODEL", "openrouter/auto")
+        self.system_prompt: str = os.getenv(
+            "SYSTEM_PROMPT", "Ты полезный ассистент. Отвечай чётко и по делу."
+        )
         self.log_level: str = os.getenv("LOG_LEVEL", "INFO")
 
     @staticmethod
