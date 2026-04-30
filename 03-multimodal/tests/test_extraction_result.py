@@ -1,7 +1,5 @@
 from datetime import datetime
 
-import pytest
-
 from src.extraction_result import ExtractionResult
 
 
@@ -34,7 +32,7 @@ def test_from_dict_normalizes_invalid_action_and_period() -> None:
     assert result.period == "month"
 
 
-def test_from_dict_rejects_invalid_transaction_amount() -> None:
+def test_from_dict_invalid_transaction_becomes_unknown() -> None:
     payload = {
         "action": "transaction",
         "transaction": {
@@ -47,5 +45,27 @@ def test_from_dict_rejects_invalid_transaction_amount() -> None:
         },
     }
 
-    with pytest.raises(ValueError):
-        ExtractionResult.from_dict(payload)
+    result = ExtractionResult.from_dict(payload)
+
+    assert result.action == "unknown"
+    assert result.transaction is None
+
+
+def test_from_dict_accepts_russian_direction() -> None:
+    payload = {
+        "action": "transaction",
+        "transaction": {
+            "occurred_at": "2026-04-28T10:30:00",
+            "direction": "расход",
+            "amount": 100,
+            "expense_type": "daily",
+            "category": "продукты",
+            "description": "хлеб",
+        },
+    }
+
+    result = ExtractionResult.from_dict(payload)
+
+    assert result.action == "transaction"
+    assert result.transaction is not None
+    assert result.transaction.direction == "expense"

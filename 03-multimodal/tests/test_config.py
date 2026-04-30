@@ -34,7 +34,8 @@ def test_settings_reads_values_from_environment(monkeypatch: pytest.MonkeyPatch)
 def test_settings_fails_fast_without_required_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
 
-    with pytest.raises(ValueError, match="LLM_API_KEY"):
+    with pytest.raises(ValueError, match="LLM_API_KEY|OPENROUTER_API_KEY"):
         Settings()

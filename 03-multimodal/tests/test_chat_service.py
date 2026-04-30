@@ -5,6 +5,7 @@ import pytest
 
 from src.chat_service import (
     FALLBACK_MESSAGE,
+    GREETING_REPLY,
     UNSUPPORTED_INPUT_MESSAGE,
     ChatService,
 )
@@ -96,11 +97,35 @@ async def test_handle_text_returns_report(llm_mock: LLMClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_handle_text_greeting_short_circuit(llm_mock: LLMClient) -> None:
+    service = ChatService(llm_mock)
+
+    result = await service.handle_text(USER_ID, "Привет")
+
+    assert result == GREETING_REPLY
+    llm_mock.extract_from_text.assert_not_called()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_handle_text_short_expense_without_llm(llm_mock: LLMClient) -> None:
+    store = TransactionStore()
+    service = ChatService(llm_mock, transaction_store=store)
+
+    result = await service.handle_text(USER_ID, "100 р хлеб")
+
+    assert "Транзакция сохранена" in result
+    assert "100.00" in result
+    assert "хлеб" in result
+    llm_mock.extract_from_text.assert_not_called()  # type: ignore[attr-defined]
+    assert len(store.list_for_user(USER_ID)) == 1
+
+
+@pytest.mark.asyncio
 async def test_handle_text_unknown_action(llm_mock: LLMClient) -> None:
     llm_mock.extract_from_text.return_value = ExtractionResult(action="unknown")  # type: ignore[attr-defined]
     service = ChatService(llm_mock)
 
-    result = await service.handle_text(USER_ID, "Привет")
+    result = await service.handle_text(USER_ID, "Расскажи анекдот")
 
     assert result == UNSUPPORTED_INPUT_MESSAGE
 

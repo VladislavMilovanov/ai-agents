@@ -1,0 +1,21 @@
+---
+description: Соглашения по коду проекта; детали в docs/vision.md
+alwaysApply: true
+---
+
+# Conventions
+
+Полное техническое видение — в **`docs/vision.md`**. Правила здесь только привязывают работу агента к документу; не дублируй длинные формулировки из vision в ответах — указывай номер раздела при необходимости.
+
+**Генерация кода** (сверяйся с vision):
+
+- §1 — стек: Python 3.12, async aiogram (polling), uv, make, LangChain + openai-клиент к OpenRouter, ruff, pytest; референс цепочки — `naive-rag.ipynb` / `rag_query_transform_chain`.
+- §2 — KISS, YAGNI; один класс = один файл; end-to-end раньше абстракций.
+- §3 — `src/`, `tests/`, `docs/`, корпус в `data/` (имена файлов — в vision).
+- §4 — handler → сервис RAG/диалога → индексация и цепочка; инфраструктура отдельно.
+- §5 — без БД; `InMemoryVectorStore`; история как LangChain messages (`HumanMessage` / `AIMessage` / при необходимости `SystemMessage`).
+- §6 — `/index`, переиндексация при старте, `/index_status` (число чанков).
+- §7 — query transformation с историей; топ-K из `RETRIEVER_K`; ответ по истории и контексту; безопасные ответы при сбоях, детали в логах.
+- §9 — единый `Settings`, обязательные параметры при старте.
+- §10 — `logging`, stdout, без секретов.
+- §11 — не усложнять make / uv / Docker без нужды.

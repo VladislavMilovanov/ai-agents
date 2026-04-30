@@ -1,9 +1,11 @@
 import logging
+import re
 
 from src.balance_report_service import BalanceReportService
 from src.dialog_history import DialogHistory
 from src.extraction_result import ExtractionResult
 from src.llm_client import LLMClient
+from src.short_expense_parser import try_parse_short_expense
 from src.transaction_store import TransactionStore
 
 logger = logging.getLogger(__name__)
@@ -11,6 +13,16 @@ logger = logging.getLogger(__name__)
 FALLBACK_MESSAGE = "Извини, сейчас не могу ответить. Попробуй чуть позже."
 UNSUPPORTED_INPUT_MESSAGE = (
     "Не удалось распознать транзакцию. Укажи сумму, тип операции и описание."
+)
+GREETING_REPLY = (
+    "Привет! Я записываю доходы и расходы. Напиши, например: "
+    "«100 ₽ хлеб» или «5000 зарплата», либо пришли фото чека."
+)
+
+_HELLO_ONLY = re.compile(
+    r"^(привет!?|здравствуй(те)?!?|hi!?|hello!?|"
+    r"доброе\s+утро!?|добрый\s+(день|вечер)!?)\s*$",
+    re.IGNORECASE,
 )
 
 
@@ -30,6 +42,21 @@ class ChatService:
         self._report_service = report_service or BalanceReportService()
 
     async def handle_text(self, user_id: int, user_text: str) -> str:
+        stripped = user_text.strip()
+        if _HELLO_ONLY.match(stripped):
+            if self._history:
+                self._history.add(user_id, "user", user_text)
+                self._history.add(user_id, "assistant", GREETING_REPLY)
+            return GREETING_REPLY
+
+        shortcut = try_parse_short_expense(user_text)
+        if shortcut is not None:
+            answer = self._apply_result(user_id, shortcut)
+            if self._history:
+                self._history.add(user_id, "user", user_text)
+                self._history.add(user_id, "assistant", answer)
+            return answer
+
         past = self._history.get(user_id) if self._history else []
         try:
             result = await self._llm.extract_from_text(
