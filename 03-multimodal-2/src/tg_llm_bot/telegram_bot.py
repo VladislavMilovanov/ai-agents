@@ -30,7 +30,12 @@ class TelegramBotApp:
         )
 
     async def _on_start(self, message: Message) -> None:
-        await message.answer("Напишите сообщение.")
+        await message.answer(
+            "Я отвечаю как технический специалист по состоянию оборудования "
+            "(вибродиагностика, нормы, документация — из ваших сообщений).\n\n"
+            "Вставляйте в текст выдержки из ГОСТ/регламентов и фактические "
+            "замеры; без них задам уточнения. Не подставляю числа «с потолка»."
+        )
 
     async def _on_message(self, message: Message) -> None:
         if message.text is None:
