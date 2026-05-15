@@ -1,0 +1,19 @@
+[project]
+name = "tg-llm-bot"
+version = "0.1.0"
+description = "Telegram LLM bot MVP (OpenRouter + aiogram polling)"
+requires-python = ">=3.11"
+dependencies = [
+    "aiogram>=3.13,<4",
+    "openai>=1.50",
+]
+
+[project.scripts]
+tg-llm-bot = "tg_llm_bot.main:run_main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
