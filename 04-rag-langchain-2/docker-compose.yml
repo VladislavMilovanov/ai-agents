@@ -1,0 +1,6 @@
+services:
+  bot:
+    build: .
+    image: telegram-llm-bot
+    env_file: .env
+    restart: unless-stopped
