@@ -10,7 +10,9 @@ from app.services.dialog_service import DialogService
 logger = logging.getLogger(__name__)
 
 WELCOME_MESSAGE = (
-    "Привет! Я LLM-ассистент в Telegram. Напишите мне текстовым сообщением — помогу с вопросами."
+    "Привет! Я помощник по продуктам Сбера — кредиты, вклады и справка. "
+    "Задайте вопрос текстом; отвечаю по документам из базы знаний.\n\n"
+    "Команды: /index — обновить индекс, /index_status — число чанков в индексе."
 )
 NON_TEXT_MESSAGE = "Сейчас я понимаю только текстовые сообщения"
 EMPTY_TEXT_MESSAGE = "Напишите ваш вопрос текстом"
@@ -23,7 +25,7 @@ class MessageHandler:
 
     def register(self, router: Router) -> None:
         router.message.register(self.handle_start, CommandStart())
-        router.message.register(self.handle_text, F.text)
+        router.message.register(self.handle_text, F.text, ~F.text.startswith("/"))
         router.message.register(self.handle_non_text)
 
     async def handle_start(self, message: Message) -> None:

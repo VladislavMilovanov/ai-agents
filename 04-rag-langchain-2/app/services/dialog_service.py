@@ -1,12 +1,14 @@
 import logging
 
 from app.config.settings import Settings
-from app.llm.openrouter_client import OpenRouterClient
-from app.models.chat_message import ChatMessage
-from app.rag.context_provider import ContextProvider
+from app.rag.rag_chain import RagChain
 from app.services.chat_history import ChatHistory
 
 logger = logging.getLogger(__name__)
+
+INDEX_NOT_READY_MESSAGE = (
+    "База документов ещё не готова. Подождите завершения индексации или отправьте /index."
+)
 
 
 class DialogService:
@@ -14,26 +16,28 @@ class DialogService:
         self,
         settings: Settings,
         chat_history: ChatHistory,
-        openrouter_client: OpenRouterClient,
-        context_provider: ContextProvider,
+        rag_chain: RagChain,
     ) -> None:
         self._settings = settings
         self._chat_history = chat_history
-        self._openrouter_client = openrouter_client
-        self._context_provider = context_provider
+        self._rag_chain = rag_chain
 
     async def reply(self, chat_id: int, user_text: str) -> str:
-        self._chat_history.add(chat_id, ChatMessage(role="user", content=user_text))
+        if not self._rag_chain.is_ready():
+            logger.warning("RAG index not ready chat_id=%s", chat_id)
+            return INDEX_NOT_READY_MESSAGE
 
-        messages: list[dict[str, str]] = [
-            {"role": "system", "content": self._settings.system_prompt},
-        ]
-        messages.extend(
-            message.to_api_dict() for message in self._chat_history.get_messages(chat_id)
+        history = self._chat_history.get_messages(chat_id)
+        logger.info(
+            "Dialog RAG request chat_id=%s history_messages=%s",
+            chat_id,
+            len(history),
         )
-        messages = self._context_provider.enrich(messages)
-
-        logger.info("Dialog request chat_id=%s messages=%s", chat_id, len(messages))
-        answer = await self._openrouter_client.complete(messages)
-        self._chat_history.add(chat_id, ChatMessage(role="assistant", content=answer))
+        answer = await self._rag_chain.answer(
+            user_text,
+            history,
+            self._settings.system_prompt,
+        )
+        self._chat_history.add_user(chat_id, user_text)
+        self._chat_history.add_assistant(chat_id, answer)
         return answer

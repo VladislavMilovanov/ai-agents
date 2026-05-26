@@ -1,4 +1,4 @@
-.PHONY: install run lint format check docker-build docker-run up down
+.PHONY: install run lint format test check docker-build docker-run up down
 
 install:
 	uv sync --dev
@@ -12,6 +12,9 @@ lint:
 
 format:
 	uv run ruff format .
+
+test:
+	uv run pytest
 
 check:
 	uv run python scripts/self_check.py

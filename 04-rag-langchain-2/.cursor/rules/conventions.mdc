@@ -1,5 +1,5 @@
 ---
-description: Конвенции разработки — KISS, слои, стек (см. docs/vision.md)
+description: Соглашения по коду; детали в docs/vision.md
 alwaysApply: true
 ---
 
@@ -7,27 +7,26 @@ alwaysApply: true
 
 **Источник истины:** [docs/vision.md](docs/vision.md). При неясности — сверяйся с документом; не дублируй и не расширяй scope сверх него.
 
+**Генерация кода** (указывай § vision при необходимости):
+
+- §1 — стек: Python 3.12, async **aiogram** (polling), **uv**, **make**, **LangChain** + OpenRouter (`OPENROUTER_BASE_URL`), **ruff**, **pytest**; референс цепочки — `naive-rag.ipynb` / `rag_query_transform_chain`.
+- §2 — KISS, YAGNI; один публичный класс = один файл; end-to-end раньше абстракций.
+- §3 — код в `app/`, корпус в `data/`, документация в `docs/`.
+- §4 — handlers → `DialogService` → `RagChain` / `IndexService`; handlers не вызывают LLM напрямую; DI только в `main.py`.
+- §5 — без БД; `InMemoryVectorStore`; история — LangChain messages (`HumanMessage` / `AIMessage` / `SystemMessage`).
+- §6 — `/index`, полная переиндексация при старте, `/index_status` (число чанков).
+- §7 — query transformation с историей; топ-K из `RETRIEVER_K`; ответ по контексту и истории; системный промпт — **ассистент по продуктам Сбера**.
+- §8 — единый `Settings`, обязательные параметры RAG при старте.
+- §9 — `logging`, stdout, без секретов и полных текстов сообщений.
+- §10 — не усложнять make / uv / Docker без нужды.
+
 ## Scope
 
-- Только MVP: Telegram-бот + диалог + LLM. Новый класс, модуль или зависимость — только с явной причиной из vision.
-- Не добавляй: LangChain, FastAPI/HTTP-сервер, БД, брокеры, DI-фреймворки, retry/circuit breaker, RAG-реализацию (только заглушка `ContextProvider`).
-
-## Структура и ООП
-
-- Один публичный класс на файл; файл `snake_case.py` → класс `PascalCase`. Исключение: `main.py` — composition root.
-- Слои: `handlers` → `DialogService` → `OpenRouterClient`. Handlers не вызывают LLM; LLM-клиент не знает про Telegram.
-- Зависимости собираются **только** в `main.py`, передаются через конструктор (manual DI).
-- RAG: расширять через `ContextProvider.enrich()`; `DialogService` не переписывать под retrieval.
+- Спринт 2: RAG (индексация + цепочка + интеграция в бота). Новый модуль/зависимость — только с причиной из vision.
+- Не добавляй: FastAPI/HTTP-сервер, БД, брокеры, persistent vector DB, DI-фреймворки, retry/circuit breaker, LangGraph «на вырост».
 
 ## Код
 
-- Python 3.12, весь I/O — **async** (aiogram + `AsyncOpenAI`).
-- Конфиг, модель, промпт, лимиты — **только** `Settings` / env (`pydantic-settings`). Без хардкода секретов и «магических» строк в бизнес-логике.
-- Именование: модули `snake_case`, классы `PascalCase`.
-- Ошибки MVP: пользователю — коротко; детали — в лог. Без retry и fallback-моделей.
-- Логи: не ключи, не полные тексты промптов/сообщений (см. vision §9).
-
-## Инструменты
-
-- Зависимости: **uv** (`pyproject.toml`, `uv.lock`). Качество: **ruff** (`make lint`). Запуск: `make run` / `python -m app`.
-- Перед завершением задачи с кодом — убедись, что изменения укладываются в структуру `app/` из vision §3.
+- Весь I/O — **async** (aiogram + `ainvoke` LangChain).
+- Конфиг — только `Settings` / env. Без хардкода секретов.
+- Ошибки: пользователю — коротко; детали — в лог.

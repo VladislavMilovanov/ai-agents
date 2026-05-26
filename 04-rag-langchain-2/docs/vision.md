@@ -1,9 +1,11 @@
 # Техническое видение проекта
 
-Отправная точка для разработки LLM-ассистента в виде Telegram-бота.  
+Telegram-бот — **ассистент по продуктам Сбера** с **RAG** (retrieval-augmented generation).  
 Идея продукта: [idea.md](idea.md).
 
-Принципы: **KISS**, минимум абстракций, **ООП** (один класс — один файл). Без оверинжиниринга.
+Принципы: **KISS**, **YAGNI**, **ООП** (один публичный класс — один файл). Без оверинжиниринга.
+
+Референс пайплайна: ноутбук **`naive-rag.ipynb`**, итоговая цепочка **`rag_query_transform_chain`** — ориентир по этапам (query transformation → retrieval → ответ), не обязательная копия построчно.
 
 ---
 
@@ -15,102 +17,66 @@
 
 ### Управление зависимостями
 
-- **uv** — единственный инструмент для окружения и зависимостей
-- `pyproject.toml` — метаданные проекта и список зависимостей
-- `uv.lock` — зафиксированные версии (коммитится в репозиторий)
-- Локально: `uv venv`, `uv sync` (dev-зависимости — с флагом `--dev` при необходимости)
+- **uv** — окружение и зависимости (`pyproject.toml`, `uv.lock`)
 
 ### Основные библиотеки
 
 | Назначение | Технология |
 |------------|------------|
-| Telegram Bot API | **aiogram** 3.x, запуск через **long polling** |
-| LLM (OpenRouter) | официальный клиент **`openai`** (`AsyncOpenAI`), `base_url` и ключ — из конфигурации |
-| Конфигурация | **pydantic-settings**, переменные из `.env` |
-| Качество кода (dev) | **ruff** — lint и format |
+| Telegram | **aiogram** 3.x, **long polling** |
+| RAG и LLM | **LangChain** (`langchain`, `langchain-core`, `langchain-openai`, `langchain-text-splitters`) |
+| PDF | **pypdf** |
+| Провайдер | **OpenRouter** через `ChatOpenAI` / embeddings с `openai_api_base` = `OPENROUTER_BASE_URL` |
+| Векторное хранилище | **`InMemoryVectorStore`** (LangChain) |
+| Конфигурация | **pydantic-settings**, `.env` |
+| Качество | **ruff** (lint/format), **pytest** (smoke критического пути) |
 
-Модель LLM, системный промпт и прочие параметры — **только из переменных окружения** (без хардкода в коде).
+Модели, промпт, `RETRIEVER_K`, лимиты — **только из env** (`Settings`).
 
-### Сборка (на этапе MVP)
+### Локальный запуск
 
-- Отдельного артефакта (wheel/sdist) нет: «сборка» = установка зависимостей (`uv sync`) и запуск приложения
-- При необходимости позже — `uv build`
+- **Make** — `make install`, `make run`, `make lint`, `make test`
+- **Docker** — опционально, тот же `.env`
 
-### Локальный запуск и автоматизация
+### Сознательно не используем
 
-- **Make** — единая точка входа для команд без запоминания флагов uv/Docker
-- **Docker** — опциональный локальный запуск в контейнере (тот же код, те же env)
-
-### Тестирование
-
-- **pytest** — запланирован на следующих этапах, не блокирует первый запуск бота
-
-### Эволюция (не в MVP)
-
-- **RAG** (retrieval-augmented generation) — планируется добавить позже; текущая архитектура не должна этому мешать, но реализацию RAG в MVP не включаем
-
-### Сознательно не используем на старте
-
-LangChain, отдельный HTTP-сервер (FastAPI и т.п.), БД, брокеры сообщений, Poetry/pip-tools.
+FastAPI/отдельный HTTP-сервер, БД, брокеры, persistent vector DB, LangGraph, Poetry, retry/circuit breaker.
 
 ---
 
 ## 2. Принципы разработки
 
-### KISS
+### KISS и YAGNI
 
-Реализуем только то, что нужно для диалога в Telegram и ответа LLM по роли из системного промпта. Каждая новая сущность (класс, модуль, зависимость) — с явной причиной.
+Только сквозной сценарий: **индексация корпуса → диалог в Telegram → ответ по RAG**. Каждый новый класс/зависимость — с явной причиной.
 
-### ООП: один класс — один файл
+### ООП
 
-- Один публичный класс на файл; имя файла в `snake_case`, совпадает с назначением класса (например, `dialog_service.py` → класс `DialogService`)
-- Без «god object» и смешения ответственностей в одном модуле
-- Исключение: точка входа `main.py` без класса или с минимальной обвязкой запуска
+- Один публичный класс на файл; `snake_case.py` → `PascalCase`
+- `main.py` — composition root без бизнес-логики
 
-### Слои и зависимости
-
-Явные границы без лишних уровней:
+### Слои
 
 ```
-Telegram (handlers) → сервис диалога → клиент LLM
+handlers → DialogService → RagChain
+                        ↘ IndexService
 ```
 
-Handlers не вызывают OpenAI напрямую; LLM-клиент не знает про Telegram.
+Handlers не вызывают LLM; LangChain-клиенты не знают про Telegram.
 
 ### Async
 
-Весь I/O — асинхронно: aiogram и `AsyncOpenAI` в едином async-стиле, без смешения sync/async в одном потоке обработки.
+aiogram и LangChain (`ainvoke`) в едином async-стиле.
 
-### Конфигурация
+### История диалога
 
-Секреты, модель, системный промпт и лимиты — только из переменных окружения (`.env` локально, env в Docker). В репозитории — `.env.example` без секретов.
+- В памяти процесса, per `chat_id`
+- Формат — **сообщения LangChain**: `HumanMessage`, `AIMessage`, при необходимости `SystemMessage`
+- Лимит — последние **N пар** user/assistant (`HISTORY_MAX_PAIRS`, default 10)
 
-### Состояние диалога (MVP)
+### Системный промпт
 
-- История сообщений — **в памяти процесса** (словарь по `chat_id`); при рестарте теряется — приемлемо для проверки идеи
-- Обрезка истории — **последние N пар** user/assistant (N задаётся в env, по умолчанию 10), чтобы не раздувать контекст и стоимость запросов
-- Один **системный промпт** на всё приложение из env; роли «на пользователя» — не в MVP (при необходимости расширим позже)
-
-### Эволюция: RAG
-
-Перед вызовом LLM зарезервирована точка расширения (отдельный класс/модуль подготовки контекста). Реализацию RAG не делаем в MVP, но не закладываем решения, которые помешают вставить retrieval между диалогом и LLM.
-
-### Качество кода
-
-- Перед коммитом: `make lint` (ruff)
-- **pytest** — на следующих этапах, когда появятся стабильные сценарии для тестов
-
-### Документация
-
-Код, `vision.md`, `README` с командами Make — достаточно; отдельная wiki не нужна.
-
-### Именование
-
-| Сущность | Стиль |
-|----------|--------|
-| Файлы, модули | `snake_case` |
-| Классы | `PascalCase` |
-| Константы и настройки | через pydantic-settings, не «магические» строки в бизнес-логике |
+Ассистент **по продуктам и услугам Сбера** (кредиты, вклады, справка): отвечает в духе банковского консультанта, **опирается на контекст из документов**, не выдумывает тарифы/условия вне источников; при отсутствии фактов в контексте — честно сообщает об этом. Текст задаётся в `SYSTEM_PROMPT` (env).
 
 ---
 
@@ -120,67 +86,57 @@ Handlers не вызывают OpenAI напрямую; LLM-клиент не з
 04-rag-langchain-2/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py                  # точка входа: сборка зависимостей, запуск polling
+│   ├── main.py                      # DI, старт polling, переиндексация при старте
 │   ├── config/
-│   │   ├── __init__.py
-│   │   └── settings.py          # класс Settings
+│   │   ├── settings.py              # Settings
+│   │   └── logging_setup.py
 │   ├── bot/
-│   │   ├── __init__.py
-│   │   └── telegram_bot.py      # класс TelegramBot
+│   │   └── telegram_bot.py          # TelegramBot
 │   ├── handlers/
-│   │   ├── __init__.py
-│   │   └── message_handler.py   # класс MessageHandler
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── chat_message.py      # dataclass ChatMessage
+│   │   ├── message_handler.py       # текст, /start
+│   │   └── index_commands_handler.py  # /index, /index_status
 │   ├── services/
-│   │   ├── __init__.py
-│   │   ├── dialog_service.py    # класс DialogService
-│   │   └── chat_history.py      # класс ChatHistory
-│   ├── llm/
-│   │   ├── __init__.py
-│   │   └── openrouter_client.py # класс OpenRouterClient
+│   │   ├── dialog_service.py        # DialogService
+│   │   └── chat_history.py          # ChatHistory (BaseMessage)
 │   └── rag/
-│       ├── __init__.py
-│       └── context_provider.py  # класс ContextProvider (заглушка → RAG)
+│       ├── corpus_loader.py         # CorpusLoader
+│       ├── index_service.py         # IndexService
+│       └── rag_chain.py             # RagChain
+├── data/
+│   ├── ouk_potrebitelskiy_kredit_lph.pdf
+│   ├── usl_r_vkladov.pdf
+│   └── sberbank_help_documents.json
 ├── docs/
 │   ├── idea.md
-│   └── vision.md
+│   ├── vision.md
+│   └── tasklist.md
+├── tests/                           # pytest, Спринт 2
 ├── .env.example
-├── .gitignore
-├── Dockerfile
-├── docker-compose.yml
 ├── Makefile
 ├── pyproject.toml
 ├── uv.lock
 └── README.md
 ```
 
-### Назначение ключевых модулей
+Опционально в корне: **`naive-rag.ipynb`** (эксперимент/референс; продакшн-логика — в `app/`).
+
+### Назначение модулей
 
 | Модуль | Класс | Ответственность |
 |--------|--------|-----------------|
-| `main.py` | — | Загрузка настроек, создание экземпляров, `start_polling` |
-| `config/settings.py` | `Settings` | Чтение и валидация env |
-| `bot/telegram_bot.py` | `TelegramBot` | `Bot`, `Dispatcher`, регистрация handlers |
-| `handlers/message_handler.py` | `MessageHandler` | Текст, `/start`; делегирование в `DialogService` |
-| `models/chat_message.py` | `ChatMessage` | Dataclass сообщения диалога (role, content) |
-| `services/chat_history.py` | `ChatHistory` | Хранение и обрезка истории по `chat_id` в RAM |
-| `services/dialog_service.py` | `DialogService` | Сборка messages для API, вызов LLM, сохранение ответа |
-| `llm/openrouter_client.py` | `OpenRouterClient` | Запрос к OpenRouter через `AsyncOpenAI` |
-| `rag/context_provider.py` | `ContextProvider` | Подготовка контекста перед LLM (MVP: заглушка) |
+| `main.py` | — | Settings, wiring, `reindex()` при старте, polling |
+| `corpus_loader.py` | `CorpusLoader` | Загрузка PDF + JSON из `DATA_DIR` |
+| `index_service.py` | `IndexService` | Чанки, эмбеддинги, `InMemoryVectorStore`, `reindex()`, статус |
+| `rag_chain.py` | `RagChain` | Query transform → retriever top-K → ответ LLM |
+| `dialog_service.py` | `DialogService` | История + вызов `RagChain` |
+| `chat_history.py` | `ChatHistory` | Буфер `BaseMessage` per `chat_id` |
+| `index_commands_handler.py` | `IndexCommandsHandler` | `/index`, `/index_status` |
 
-### Запуск
+Модуль **`app/llm/openrouter_client.py`** (Спринт 1) **удаляется** в Спринте 2: вызовы LLM для RAG идут через LangChain `ChatOpenAI` в `RagChain` и эмбеддинги в `IndexService`. Отдельный «тонкий» openai-клиент не дублируем (YAGNI).
 
-```bash
-uv run python -m app
-```
+Заглушка **`context_provider.py`** — удаляется, заменена `RagChain`.
 
-Команды обёрнуты в **Makefile** (`make run`, `make docker-run` и т.д.).
-
-### Тесты
-
-Каталог `tests/` добавим вместе с pytest; в структуру MVP не включаем.
+Модель **`chat_message.py`** — удаляется, история на LangChain messages.
 
 ---
 
@@ -188,409 +144,234 @@ uv run python -m app
 
 ### Общий подход
 
-Монолитное приложение: **один процесс**, **long polling**, без отдельного HTTP-сервера и без микросервисов.
+Один процесс, long polling, монолит.
 
 ```mermaid
 flowchart LR
     User((Пользователь))
     TG[Telegram API]
     MH[MessageHandler]
+    IH[IndexCommandsHandler]
     DS[DialogService]
-    CP[ContextProvider]
     CH[ChatHistory]
-    LLM[OpenRouterClient]
+    RC[RagChain]
+    IS[IndexService]
     OR[OpenRouter]
 
     User --> TG --> MH --> DS
+    TG --> IH --> IS
     DS --> CH
-    DS --> CP
-    DS --> LLM --> OR
-    OR --> LLM --> DS --> MH --> TG --> User
+    DS --> RC --> IS
+    RC --> OR
+    IS --> OR
+    main --> IS
 ```
 
-### Поток обработки сообщения
+### Поток текстового сообщения
 
-1. Пользователь отправляет **текст** → Telegram → aiogram → `MessageHandler`.
-2. Handler показывает статус **«печатает…»** (`send_chat_action` с `typing`) на время ожидания LLM.
-3. `MessageHandler` вызывает `DialogService.reply(chat_id, user_text)`.
-4. `DialogService` сохраняет сообщение пользователя в `ChatHistory`, собирает список messages для API (system + история).
-5. `ContextProvider.enrich(messages)` — **заглушка в MVP**: возвращает messages без изменений; позже — подмешивание контекста из RAG.
-6. `OpenRouterClient.chat_completion(messages)` → OpenRouter.
-7. Ответ assistant сохраняется в `ChatHistory`, возвращается в handler.
-8. Handler отправляет текст ответа в чат.
+1. Handler: `typing` → `DialogService.reply(chat_id, text)`.
+2. Сохранить `HumanMessage` в `ChatHistory`.
+3. `RagChain.answer(question, history, system_prompt)`:
+   - **Query transformation**: LLM + история → поисковый запрос (как в `rag_query_transform_chain`).
+   - **Retriever**: топ-**K** чанков, **K** = `RETRIEVER_K`.
+   - **Финальный LLM**: системный промпт (роль консультанта Сбера) + история + user-сообщение с контекстом чанков.
+4. Сохранить `AIMessage`, отправить ответ в Telegram.
+
+### Индексация
+
+- **При старте** (`main.py`): `await index_service.reindex()` — полная пересборка индекса из `data/`.
+- **`/index`**: то же по запросу пользователя.
+- **`/index_status`**: число чанков в текущем индексе (или сообщение, что индекс пуст).
+
+Команды индекса **не сбрасывают** историю диалога.
 
 ### Composition root
 
-Сборка зависимостей только в `main.py`:
+`Settings` → `CorpusLoader`, `IndexService`, `RagChain`, `ChatHistory`, `DialogService` → handlers → `TelegramBot`.
 
-`Settings` → `ChatHistory`, `OpenRouterClient`, `ContextProvider`, `DialogService` → `MessageHandler` → `TelegramBot`.
+Зависимости — через конструктор (manual DI в `main.py`).
 
-Зависимости передаются через **конструктор** (простой manual DI, без DI-фреймворков).
-
-### Обработка ошибок (MVP)
+### Ошибки
 
 | Ситуация | Поведение |
 |----------|-----------|
-| Ошибка LLM / сеть / таймаут | Сообщение пользователю: не удалось получить ответ; детали — в лог |
-| Не текст (стикер, фото, …) | Ответ: поддерживается только текст |
-| Падение процесса | История в RAM теряется (приемлемо для MVP) |
+| Сбой LLM / сети | Короткое сообщение пользователю; детали в лог |
+| Пустой индекс при вопросе | Сообщение, что база не готова; лог ERROR |
+| Не текст | «Понимаю только текст» |
+| Пустой текст | Подсказка написать вопрос |
 
-Без retry-очередей, circuit breaker и fallback-моделей на старте.
-
-### ContextProvider и RAG
-
-- **MVP:** класс-заглушка, не меняет messages.
-- **Позже:** retrieval, вставка фрагментов в system или отдельное user-сообщение с контекстом; `DialogService` не переписываем — меняется только реализация `ContextProvider`.
-
-### Масштабирование
-
-Один инстанс = один polling. Горизонтальное масштабирование и webhook — вне scope MVP.
+Без retry и fallback-моделей.
 
 ---
 
 ## 5. Модель данных
 
-### Хранилище
+### Постоянное хранилище
 
-**БД нет.** Состояние диалога — только **в памяти процесса** (`ChatHistory`). При рестарте история обнуляется.
+**Нет.** Индекс и история — **в RAM процесса**. Рестарт → переиндексация при старте, история обнуляется.
 
-### ChatMessage
+### Индекс
 
-Dataclass в `app/models/chat_message.py`:
+- `InMemoryVectorStore` + эмбеддинги через OpenRouter
+- Сплиттер: разумный дефолт (`CHUNK_SIZE` / `CHUNK_OVERLAP` в env, default 1000 / 200)
+- Статус: **число чанков** (`len` документов в store)
 
-| Поле | Тип | Значения |
-|------|-----|----------|
-| `role` | `Literal["user", "assistant"]` | Роль в диалоге (в хранилище; `system` не храним) |
-| `content` | `str` | Текст сообщения |
+### История
 
-Метод преобразования в формат OpenAI API: `to_api_dict() -> dict` с ключами `role`, `content`.
+- Ключ: `chat_id: int`
+- Значение: `list[BaseMessage]` (`HumanMessage`, `AIMessage`)
+- Обрезка: последние `HISTORY_MAX_PAIRS` пар
 
-### ChatHistory
+### Корпус (`data/`)
 
-| Аспект | Описание |
-|--------|----------|
-| Ключ | `chat_id: int` (Telegram) |
-| Значение | Список `ChatMessage` (только `user` и `assistant`) |
-| System prompt | Не хранится; добавляется при сборке запроса из `Settings.system_prompt` |
-| Лимит | Последние **N пар** диалога (user + assistant = одна пара). **N** — из env (`history_max_pairs`, по умолчанию **10**, т.е. до 20 сообщений в истории) |
-
-### Сборка запроса к LLM
-
-Порядок messages для API:
-
-1. `{"role": "system", "content": system_prompt}` (+ позже дополнения от RAG через `ContextProvider`)
-2. История чата (обрезанная)
-3. Текущее сообщение пользователя (если ещё не добавлено в историю на момент сборки — по логике `DialogService`)
-
-### Settings (конфигурация, не доменная БД)
-
-| Поле (env) | Назначение |
-|------------|------------|
-| `TELEGRAM_BOT_TOKEN` | Токен бота |
-| `OPENROUTER_API_KEY` | API-ключ OpenRouter |
-| `OPENROUTER_BASE_URL` | Base URL (OpenRouter) |
-| `LLM_MODEL` | Идентификатор модели |
-| `SYSTEM_PROMPT` | Системный промпт / роль ассистента |
-| `HISTORY_MAX_PAIRS` | Макс. пар user/assistant в истории (default: 10) |
-| `LOG_LEVEL` | Уровень логирования |
-
-### Пользователь
-
-Отдельной сущности **User** нет — идентификатором служит `chat_id`. Профили и учётные записи — не в MVP.
-
-### Команда /start
-
-Приветственное сообщение (текст из кода или env), **историю не сбрасывает**.
-
-### RAG (позже)
-
-Модели документов, чанков и индекса появятся с реализацией RAG; в MVP не определяем.
+| Файл | Тип |
+|------|-----|
+| `ouk_potrebitelskiy_kredit_lph.pdf` | PDF |
+| `usl_r_vkladov.pdf` | PDF |
+| `sberbank_help_documents.json` | JSON (справка) |
 
 ---
 
-## 6. Работа с LLM
+## 6. Индексация и команды бота
 
-### Провайдер и клиент
+- **`/index`**: полная переиндексация.
+- **Старт бота**: полная переиндексация (как `/index`).
+- **`/index_status`**: минимум **число чанков**; при ошибке/пустом — понятный текст.
 
-- Провайдер: **OpenRouter** (OpenAI-совместимый API)
-- Библиотека: **`openai`** → `AsyncOpenAI`
-- Параметры клиента из `Settings`: `openrouter_api_key`, `openrouter_base_url`
-- Инкапсуляция в классе **`OpenRouterClient`** (`app/llm/openrouter_client.py`)
-
-### Вызов API
-
-- Метод: `chat.completions.create`
-- Вход: `model` (из env), `messages` (список dict после сборки в `DialogService` + `ContextProvider`)
-- Выход MVP: строка `choices[0].message.content`
-- Пустой или отсутствующий content → исключение, обработка на уровне `DialogService` / handler
-
-### Параметры генерации (MVP)
-
-| Параметр | MVP |
-|----------|-----|
-| `temperature` | **Не передаём** — дефолт провайдера; при необходимости добавим в env позже |
-| `max_tokens` | Не задаём — лимит модели/провайдера |
-| Стриминг | **Выключен** — ждём полный ответ, одно сообщение в Telegram |
-
-### Таймаут
-
-- HTTP-таймаут запроса к API: **60 с** (значение из env, например `LLM_TIMEOUT_SEC`, default `60`)
-
-### Заголовки OpenRouter (опционально)
-
-Рекомендованные заголовки передаём через `default_headers` клиента, если заданы в env:
-
-| Env | Заголовок |
-|-----|-----------|
-| `OPENROUTER_HTTP_REFERER` | `HTTP-Referer` |
-| `OPENROUTER_X_TITLE` | `X-Title` |
-
-Если переменная пуста — заголовок не отправляем.
-
-### Цепочка вызова
-
-```
-DialogService
-  → ContextProvider.enrich(messages)   # MVP: без изменений
-  → OpenRouterClient.complete(messages) → str
-```
-
-### Ошибки и повторы
-
-- Автоматический **retry** не делаем
-- Исключения логируем (без ключей и без полного текста промпта/ответа)
-- Пользователю — короткое сообщение об ошибке
-
-### Логирование запросов
-
-- Не логировать API-ключи и полные тексты сообщений
-- Допустимо: `chat_id`, имя модели, длина/число messages, длина ответа, факт ошибки
-
-### Эволюция
-
-- `temperature`, `max_tokens` — через env при настройке поведения
-- Стриминг в Telegram — отдельная задача, не в MVP
-- RAG обогащает `messages` в `ContextProvider` до вызова `OpenRouterClient`
+Логи индексации: число документов/чанков, длительность; без содержимого чанков целиком.
 
 ---
 
-## 7. Сценарии работы
+## 7. RAG и работа с LLM
+
+### Этапы (референс `rag_query_transform_chain`)
+
+1. **Query transformation** — отдельный вызов LLM с системной инструкцией и историей; на выходе — одна строка поискового запроса (раскрытие местоимений, отсылки к прошлым репликам).
+2. **Retrieval** — `as_retriever(search_kwargs={"k": RETRIEVER_K})`.
+3. **Generation** — LLM с системным промптом (ассистент Сбера + правило опоры на контекст) и user-сообщением с отформатированными чанками.
+
+### Модели
+
+| Назначение | Env |
+|------------|-----|
+| Чат (transform + answer) | `LLM_MODEL` |
+| Эмбеддинги | `EMBEDDING_MODEL` |
+
+Один `OPENROUTER_API_KEY` и `OPENROUTER_BASE_URL` для обоих.
+
+### Параметры
+
+- `temperature=0` для RAG-вызовов (детерминированнее)
+- Стриминг — не используем (одно сообщение в Telegram)
+- Таймаут — `LLM_TIMEOUT_SEC` (default 60), если применимо к клиентам LangChain
+
+### Логирование LLM
+
+- Модель, число messages, длина ответа, факт transform-query (укороченно, не полный текст)
+- Без API-ключей, без полных промптов и ответов
+
+---
+
+## 8. Сценарии работы
 
 ### Охват
 
-- Только **личные чаты** (`private`). Сообщения из групп и каналов **игнорируем** (без ответа или с минимальным логом на debug).
+Только **личные чаты** (`private`).
 
-### Сценарии MVP
+### Сценарии
 
 | # | Триггер | Поведение |
 |---|---------|-----------|
-| 1 | `/start` | Короткое **приветствие** (кто бот, как пользоваться). История **не** сбрасывается |
-| 2 | Текст | `send_chat_action(typing)` → LLM (system + история до 10 пар + текст) → ответ в чат; user/assistant сохраняются в `ChatHistory` |
-| 3 | Не текст | «Сейчас я понимаю только текстовые сообщения» |
-| 4 | Пустой текст | «Напишите ваш вопрос текстом» |
-| 5 | Ошибка LLM / таймаут | «Не удалось получить ответ, попробуйте позже»; детали в лог |
-| 6 | Длинный диалог | В API уходят только последние **10 пар**; старое отбрасывается |
-| 7 | Рестарт бота | История в RAM пропадает; для пользователя — как новый диалог в памяти бота |
+| 1 | Старт процесса | Переиндексация `data/` → polling |
+| 2 | `/start` | Приветствие; история не сбрасывается |
+| 3 | Текст | RAG-ответ с учётом истории |
+| 4 | `/index` | Переиндексация |
+| 5 | `/index_status` | Число чанков |
+| 6 | Не текст | Отказ |
+| 7 | Пустой текст | Подсказка |
+| 8 | Ошибка API | Короткое сообщение + лог |
+| 9 | Уточняющий вопрос | Query transform учитывает историю |
+| 10 | Рестарт | Новый индекс при старте; история потеряна |
 
 ### Приветствие `/start`
 
-- Текст — **константа в `MessageHandler`** (MVP, без лишнего env)
-- При необходимости позже вынесем в `WELCOME_MESSAGE` в env
-
-### Вне MVP
-
-| Сценарий | Когда |
-|----------|--------|
-| `/help` | При появлении нескольких команд или RAG |
-| `/reset` — сброс истории | По запросу, когда понадобится пользователям |
-| Групповые чаты | Отдельная задача |
-| Rate limit, модерация | После проверки идеи под нагрузкой |
-| Мультиязычный UI | Не планируем на старте |
+Константа в handler: бот — помощник по **продуктам Сбера**, можно задавать вопросы по кредитам, вкладам и справке.
 
 ---
 
-## 8. Подход к конфигурированию
+## 9. Конфигурирование
 
-### Инструмент
+### Settings (`app/config/settings.py`)
 
-- **`pydantic-settings`**, один класс **`Settings`** в `app/config/settings.py`
-- Загрузка при старте в `main.py`; один экземпляр передаётся в зависимости
-
-### Источники
-
-| Среда | Как |
-|-------|-----|
-| Локально (без Docker) | Файл **`.env`** в корне проекта + переменные окружения ОС (env имеет приоритет над файлом — стандартное поведение pydantic) |
-| Docker | Тот же **`.env`** через `env_file` в `docker run` / Compose |
-
-**Один `.env` на все способы запуска** — отдельный `.env.docker` не используем.
-
-### Репозиторий
-
-- `.env` — в **`.gitignore`**, секреты не коммитим
-- **`.env.example`** — в репозитории: все ключи с пустыми или примерными значениями, без реальных токенов
-
-### Обязательные переменные
+Обязательные:
 
 | Переменная | Описание |
 |------------|----------|
-| `TELEGRAM_BOT_TOKEN` | Токен Telegram-бота |
-| `OPENROUTER_API_KEY` | API-ключ OpenRouter |
-| `LLM_MODEL` | Идентификатор модели |
-| `SYSTEM_PROMPT` | Системный промпт (роль ассистента) |
+| `TELEGRAM_BOT_TOKEN` | Токен бота |
+| `OPENROUTER_API_KEY` | Ключ OpenRouter |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` |
+| `LLM_MODEL` | Модель чата |
+| `EMBEDDING_MODEL` | Модель эмбеддингов |
+| `SYSTEM_PROMPT` | Роль: ассистент по продуктам Сбера |
+| `RETRIEVER_K` | Топ-K чанков (целое ≥ 1) |
 
-### Опциональные (дефолты в `Settings`)
+Опциональные (дефолты в коде):
 
 | Переменная | Default | Описание |
 |------------|---------|----------|
-| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Base URL API (в `.env` можно не указывать) |
 | `HISTORY_MAX_PAIRS` | `10` | Лимит пар в истории |
-| `LLM_TIMEOUT_SEC` | `60` | Таймаут запроса к LLM |
-| `LOG_LEVEL` | `INFO` | Уровень логирования |
-| `OPENROUTER_HTTP_REFERER` | — | Заголовок OpenRouter (не задан → не отправляем) |
-| `OPENROUTER_X_TITLE` | — | Заголовок OpenRouter (не задан → не отправляем) |
+| `LLM_TIMEOUT_SEC` | `60` | Таймаут |
+| `LOG_LEVEL` | `INFO` | Логирование |
+| `DATA_DIR` | `data` | Путь к корпусу |
+| `CHUNK_SIZE` | `1000` | Размер чанка |
+| `CHUNK_OVERLAP` | `200` | Перекрытие |
+| `OPENROUTER_HTTP_REFERER` | — | Заголовок OpenRouter |
+| `OPENROUTER_X_TITLE` | — | Заголовок OpenRouter |
 
-Текст приветствия `/start` — **не в env** (константа в коде, см. раздел 7).
-
-### Валидация
-
-- При старте: если обязательное поле пустое → ошибка с именем переменной, процесс завершается
-- Типы и диапазоны (например, `history_max_pairs > 0`) проверяет pydantic
+Валидация при старте; пустые обязательные поля → выход с именем переменной.
 
 ### Пример `.env.example`
 
-```env
-TELEGRAM_BOT_TOKEN=
-OPENROUTER_API_KEY=
-LLM_MODEL=
-SYSTEM_PROMPT=
-
-# OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-# HISTORY_MAX_PAIRS=10
-# LLM_TIMEOUT_SEC=60
-# LOG_LEVEL=INFO
-# OPENROUTER_HTTP_REFERER=
-# OPENROUTER_X_TITLE=
-```
+См. актуальный файл в корне репозитория (обновляется в итерации 11).
 
 ---
 
-## 9. Подход к логгированию
+## 10. Логирование
 
-### Инструмент
-
-- Стандартная библиотека **`logging`**
-- Без structlog, loguru и внешних агрегаторов на этапе MVP
-
-### Инициализация
-
-- Функция **`setup_logging(level: str)`** вызывается один раз в `main.py` до запуска бота
-- Уровень из `Settings.log_level` (`LOG_LEVEL`, default `INFO`)
-- Для отладки локально: **`LOG_LEVEL=DEBUG`** — отдельный «dev-режим» не нужен
-
-### Формат и вывод
-
-```
-%(asctime)s [%(levelname)s] %(name)s: %(message)s
-```
-
-- Поток: **stdout** (совместимо с Docker и `docker logs`)
-- Логгеры по имени модуля: `app.handlers.message_handler`, `app.llm.openrouter_client`, …
-
-### Что логируем
-
-| Событие | Уровень | Данные |
-|---------|---------|--------|
-| Старт / остановка приложения | INFO | — |
-| Входящее сообщение | INFO | `chat_id`, длина текста |
-| Запрос к LLM | INFO | модель, число messages |
-| Успешный ответ LLM | INFO | длина ответа |
-| Игнор non-private / non-text | DEBUG | `chat_id`, тип контента |
-| Ошибка LLM / сеть | ERROR | тип/код ошибки API, **без** тела ответа; `exc_info` для неожиданных исключений |
-
-### Что не логируем
-
-- `TELEGRAM_BOT_TOKEN`, `OPENROUTER_API_KEY`
-- Полный `SYSTEM_PROMPT` и полные тексты сообщений пользователя и ассистента
-
-### Эволюция
-
-- JSON-логи, correlation id, экспорт в Loki/CloudWatch — при необходимости после MVP
+- Стандартный **`logging`**, stdout, формат с timestamp
+- INFO: старт, индексация (число чанков), входящие сообщения (`chat_id`, длина), вызовы RAG
+- ERROR: сбои API/индексации, `exc_info` для неожиданных
+- **Не логировать**: токены, ключи, полные тексты сообщений и чанков
 
 ---
 
-## 10. Сборка и деплой
+## 11. Сборка, тесты и деплой
 
-### Локальная разработка (без Docker)
+### Make
 
 | Команда | Назначение |
 |---------|------------|
-| `make install` | `uv sync --dev` — зависимости + ruff |
+| `make install` | `uv sync --dev` |
 | `make run` | `uv run python -m app` |
-| `make lint` | `uv run ruff check .` и `ruff format --check .` |
-| `make format` | `uv run ruff format .` |
+| `make lint` | ruff check + format check |
+| `make test` | `uv run pytest` |
 
-Перед первым запуском: скопировать `.env.example` → `.env`, заполнить секреты.
+### pytest (Спринт 2)
+
+- Smoke: загрузка корпуса / подсчёт чанков (фикстуры или мок эмбеддингов)
+- `RagChain`: query transform + retrieval с моком LLM/store при необходимости
+- Не дублировать интеграционные тесты Telegram
 
 ### Docker
 
-| Команда | Назначение |
-|---------|------------|
-| `make docker-build` | Сборка образа `telegram-llm-bot` |
-| `make docker-run` | `docker run --rm --env-file .env telegram-llm-bot` |
-| `make up` | `docker compose up -d` (сборка при необходимости) |
-| `make down` | `docker compose down` |
+Как в Спринте 1: образ `python:3.12-slim`, `uv sync`, `CMD python -m app`, `env_file: .env`. В образ копировать `app/` и **`data/`**.
 
-#### Dockerfile (MVP)
+### README
 
-- Базовый образ: **`python:3.12-slim`**
-- Установка **uv**, копирование `pyproject.toml` + `uv.lock`
-- `uv sync --frozen --no-dev`
-- Копирование `app/`
-- `CMD ["python", "-m", "app"]`
-- Multi-stage не используем
+Установка, `.env`, команды бота, положить файлы в `data/`, `make run`, Docker, systemd — по мере итераций Спринта 2.
 
-#### docker-compose.yml
+---
 
-Один сервис **`bot`**:
+## Эволюция (вне текущего scope)
 
-- `build: .`
-- `image: telegram-llm-bot`
-- `env_file: .env`
-- `restart: unless-stopped`
-- без проброса портов (polling не слушает входящие HTTP)
-
-### Деплой (MVP)
-
-- **Локально / VPS:** `make up` или `make run` под **systemd** (см. README)
-- CI/CD, Kubernetes, Telegram **webhook** — вне scope MVP
-- Облачный хостинг — любой VPS с Docker; vision не привязывает к платформе
-
-### README: пример systemd
-
-В **README.md** — готовый пример unit-файла `/etc/systemd/system/telegram-llm-bot.service`:
-
-- `WorkingDirectory` — путь к проекту на сервере
-- `ExecStart` — `/usr/bin/docker compose up` или `docker compose -f ... up` из каталога проекта  
-  *(альтернатива без compose: `docker run --env-file .env telegram-llm-bot`)*
-- `Restart=always`
-- `After=docker.service`
-- команды: `systemctl enable --now telegram-llm-bot`, `journalctl -u telegram-llm-bot -f`
-
-Отдельный файл unit в репозиторий не кладём — только документация в README.
-
-### .gitignore (минимум)
-
-```
-.env
-.venv/
-__pycache__/
-*.pyc
-.ruff_cache/
-.pytest_cache/
-```
-
-### Эволюция
-
-- CI (lint + тесты), публикация образа в registry
-- Healthcheck, метрики, blue-green — по мере роста проекта
+Persistent vector store, `/reset`, групповые чаты, стриминг в Telegram, CI/CD — отдельными задачами после RAG-MVP.

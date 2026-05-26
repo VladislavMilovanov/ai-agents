@@ -4,19 +4,25 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.types import Message
 
 from app.config.settings import Settings
+from app.handlers.index_commands_handler import IndexCommandsHandler
 from app.handlers.message_handler import MessageHandler
 
 logger = logging.getLogger(__name__)
 
 
 class TelegramBot:
-    def __init__(self, settings: Settings, message_handler: MessageHandler) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        message_handler: MessageHandler,
+        index_commands_handler: IndexCommandsHandler,
+    ) -> None:
         self._bot = Bot(token=settings.telegram_bot_token)
         self._dispatcher = Dispatcher()
-        self._message_handler = message_handler
 
         private_router = Router()
         private_router.message.filter(F.chat.type == "private")
+        index_commands_handler.register(private_router)
         message_handler.register(private_router)
         self._dispatcher.include_router(private_router)
 
