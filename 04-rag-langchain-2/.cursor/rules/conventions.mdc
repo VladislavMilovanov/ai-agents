@@ -1,0 +1,33 @@
+---
+description: Конвенции разработки — KISS, слои, стек (см. docs/vision.md)
+alwaysApply: true
+---
+
+# Conventions
+
+**Источник истины:** [docs/vision.md](docs/vision.md). При неясности — сверяйся с документом; не дублируй и не расширяй scope сверх него.
+
+## Scope
+
+- Только MVP: Telegram-бот + диалог + LLM. Новый класс, модуль или зависимость — только с явной причиной из vision.
+- Не добавляй: LangChain, FastAPI/HTTP-сервер, БД, брокеры, DI-фреймворки, retry/circuit breaker, RAG-реализацию (только заглушка `ContextProvider`).
+
+## Структура и ООП
+
+- Один публичный класс на файл; файл `snake_case.py` → класс `PascalCase`. Исключение: `main.py` — composition root.
+- Слои: `handlers` → `DialogService` → `OpenRouterClient`. Handlers не вызывают LLM; LLM-клиент не знает про Telegram.
+- Зависимости собираются **только** в `main.py`, передаются через конструктор (manual DI).
+- RAG: расширять через `ContextProvider.enrich()`; `DialogService` не переписывать под retrieval.
+
+## Код
+
+- Python 3.12, весь I/O — **async** (aiogram + `AsyncOpenAI`).
+- Конфиг, модель, промпт, лимиты — **только** `Settings` / env (`pydantic-settings`). Без хардкода секретов и «магических» строк в бизнес-логике.
+- Именование: модули `snake_case`, классы `PascalCase`.
+- Ошибки MVP: пользователю — коротко; детали — в лог. Без retry и fallback-моделей.
+- Логи: не ключи, не полные тексты промптов/сообщений (см. vision §9).
+
+## Инструменты
+
+- Зависимости: **uv** (`pyproject.toml`, `uv.lock`). Качество: **ruff** (`make lint`). Запуск: `make run` / `python -m app`.
+- Перед завершением задачи с кодом — убедись, что изменения укладываются в структуру `app/` из vision §3.
